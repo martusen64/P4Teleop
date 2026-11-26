@@ -26,7 +26,7 @@ class LivePlot(QtWidgets.QWidget):
         self.title, self.labels, self.unit = title, labels, unit
         self.min_range = min_range
         self.bufs = [deque(maxlen=maxlen) for _ in labels]
-        self.setMinimumHeight(150)
+        self.setMinimumHeight(110)
 
     def push(self, vals):
         for b, v in zip(self.bufs, vals):
@@ -70,6 +70,56 @@ class LivePlot(QtWidgets.QWidget):
             p.drawText(x + 40 * i, 15, l)
 
 
+class CameraView(QtWidgets.QWidget):
+    """Muestra una imagen sensor_msgs/Image (rgb8/bgr8/mono8) con los ejes del plano."""
+
+    def __init__(self, title, axis_h, axis_v):
+        super().__init__()
+        self.title = title
+        self.axis_h, self.axis_v = axis_h, axis_v  # p.ej. ('-Y', '+Y'), ('-X', '+X')
+        self.img = None
+        self.stale = True
+        self.setMinimumSize(320, 240)
+
+    def set_frame(self, frame):
+        w, h, step, enc, data = frame
+        if enc == 'rgb8':
+            fmt = QtGui.QImage.Format_RGB888
+        elif enc == 'bgr8':
+            fmt = getattr(QtGui.QImage, 'Format_BGR888', QtGui.QImage.Format_RGB888)
+        elif enc == 'mono8':
+            fmt = QtGui.QImage.Format_Grayscale8
+        else:
+            return
+        self.img = QtGui.QImage(data, w, h, step, fmt).copy()
+        self.update()
+
+    def paintEvent(self, _):
+        p = QtGui.QPainter(self)
+        p.fillRect(self.rect(), QtGui.QColor(20, 20, 24))
+        r = self.rect()
+        if self.img is not None:
+            pm = QtGui.QPixmap.fromImage(self.img).scaled(
+                r.size(), QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+            x0 = (r.width() - pm.width()) // 2
+            y0 = (r.height() - pm.height()) // 2
+            p.drawPixmap(x0, y0, pm)
+            r = QtCore.QRect(x0, y0, pm.width(), pm.height())
+        else:
+            p.setPen(QtGui.QColor(160, 160, 160))
+            p.drawText(self.rect(), QtCore.Qt.AlignCenter, 'Sin imagen\n(¿lanzar_camaras.sh?)')
+        # título y ejes
+        p.setPen(QtGui.QColor(255, 255, 255))
+        p.fillRect(r.left(), r.top(), 150, 18, QtGui.QColor(0, 0, 0, 150))
+        p.drawText(r.left() + 4, r.top() + 13, self.title + ('  (sin señal)' if self.stale else ''))
+        p.setPen(QtGui.QPen(QtGui.QColor(255, 220, 0), 2))
+        ox, oy = r.left() + 12, r.bottom() - 12
+        p.drawLine(ox, oy, ox + 40, oy)   # eje horizontal
+        p.drawLine(ox, oy, ox, oy - 40)   # eje vertical
+        p.drawText(ox + 44, oy + 4, self.axis_h)
+        p.drawText(ox - 6, oy - 44, self.axis_v)
+
+
 class Led(QtWidgets.QLabel):
     def set(self, ok, text):
         c = '#2ecc71' if ok else '#e74c3c'
@@ -82,7 +132,7 @@ class Window(QtWidgets.QWidget):
         super().__init__()
         self.n = node
         self.setWindowTitle('Teleoperación Kinova Gen3 + Phantom Omni')
-        self.resize(1250, 780)
+        self.resize(1500, 950)
         root = QtWidgets.QHBoxLayout(self)
 
         # ---- columna izquierda: estado y posiciones
@@ -128,7 +178,15 @@ class Window(QtWidgets.QWidget):
 
         # ---- columna central: gráficas
         mid = QtWidgets.QVBoxLayout()
-        root.addLayout(mid, 5)
+        root.addLayout(mid, 6)
+        cams = QtWidgets.QHBoxLayout()
+        # cam_top: arriba de la imagen = +X, izquierda = +Y  -> eje horizontal de la imagen es -Y
+        self.cam_top = CameraView('Cámara cenital (XY)', '-Y', '+X')
+        # cam_side: derecha = +X, arriba = +Z
+        self.cam_side = CameraView('Cámara lateral (XZ)', '+X', '+Z')
+        cams.addWidget(self.cam_top)
+        cams.addWidget(self.cam_side)
+        mid.addLayout(cams, 3)
         self.plot_ft = LivePlot('Fuerza en la muñeca (filtrada, tarada)', unit='N', min_range=1.0)
         self.plot_hap = LivePlot('Fuerza enviada al Omni', unit='N', min_range=1.0)
         self.plot_vel = LivePlot('Velocidad enviada al robot', unit='m/s', min_range=0.05)
@@ -234,6 +292,15 @@ class Window(QtWidgets.QWidget):
                 deg = int(np.degrees(n.joint_pos[i]))
                 b.setValue(max(-180, min(180, deg)))
         self.grip_bar.setValue(int(n.grip * 100))
+
+        for name, view in (('top', self.cam_top), ('side', self.cam_side)):
+            frame = n.pop_camera(name)
+            if frame is not None:
+                view.set_frame(frame)
+            stale = now - n.cam_t[name] > 1.0
+            if stale != view.stale:
+                view.stale = stale
+                view.update()
 
         self.plot_ft.push(n.ft_filt)
         self.plot_hap.push(n.force_sent)

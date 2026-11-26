@@ -1,0 +1,61 @@
+<?xml version="1.0"?>
+<!--
+  Dos cámaras fijas para la Opción 2 (Gazebo moderno, gz sim):
+    cam_top  : mira hacia abajo  -> plano XY   (imagen: arriba = +X, izquierda = +Y)
+    cam_side : mira hacia +Y     -> plano XZ   (imagen: derecha = +X, arriba = +Z)
+  Ajusta las <pose> si la base del robot no está en el origen del mundo.
+  Formato de <pose>: x y z roll pitch yaw (metros / radianes, frame del mundo)
+-->
+<sdf version="1.9">
+  <model name="camaras">
+    <static>true</static>
+
+    <!-- ============ Cámara cenital (plano XY) ============ -->
+    <link name="cam_top_link">
+      <!-- 2.2 m sobre el suelo, centrada en x=0.5; pitch +90º => mira a -Z -->
+      <pose>0.5 0 2.2 0 1.5708 0</pose>
+      <visual name="cuerpo">
+        <geometry><box><size>0.06 0.06 0.04</size></box></geometry>
+      </visual>
+      <sensor name="cam_top" type="camera">
+        <always_on>1</always_on>
+        <update_rate>15</update_rate>
+        <visualize>true</visualize>
+        <topic>/cam_top/image</topic>
+        <camera>
+          <horizontal_fov>0.9</horizontal_fov>
+          <image>
+            <width>640</width>
+            <height>480</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip><near>0.05</near><far>10</far></clip>
+        </camera>
+      </sensor>
+    </link>
+
+    <!-- ============ Cámara lateral (plano XZ) ============ -->
+    <link name="cam_side_link">
+      <!-- 2.5 m a la derecha del robot (y=-2.5), a 0.6 m de altura; yaw +90º => mira a +Y -->
+      <pose>0.5 -2.5 0.6 0 0 1.5708</pose>
+      <visual name="cuerpo">
+        <geometry><box><size>0.06 0.06 0.04</size></box></geometry>
+      </visual>
+      <sensor name="cam_side" type="camera">
+        <always_on>1</always_on>
+        <update_rate>15</update_rate>
+        <visualize>true</visualize>
+        <topic>/cam_side/image</topic>
+        <camera>
+          <horizontal_fov>0.9</horizontal_fov>
+          <image>
+            <width>640</width>
+            <height>480</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip><near>0.05</near><far>10</far></clip>
+        </camera>
+      </sensor>
+    </link>
+  </model>
+</sdf>

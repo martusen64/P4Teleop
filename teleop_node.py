@@ -20,7 +20,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from geometry_msgs.msg import Twist, Wrench, WrenchStamped, PoseStamped
-from sensor_msgs.msg import Joy, JointState
+from sensor_msgs.msg import Joy, JointState, Image
 from std_msgs.msg import Float64
 import tf2_ros
 
@@ -64,6 +64,8 @@ class TeleopNode(Node):
         self.declare_parameter('joint_topic', '/joint_states')
         self.declare_parameter('base_frame', 'base_link')
         self.declare_parameter('ee_frame', 'tool_frame')
+        self.declare_parameter('cam_top_topic', '/cam_top/image')    # plano XY
+        self.declare_parameter('cam_side_topic', '/cam_side/image')  # plano XZ
         # Matriz 3x3 (por filas) Omni -> frame herramienta. AJUSTAR con el Omni real.
         self.declare_parameter('axis_map', [1.0, 0.0, 0.0,
                                             0.0, 1.0, 0.0,
@@ -117,12 +119,23 @@ class TeleopNode(Node):
         self._last_twist = np.zeros(3)
         self._last_force = np.zeros(3)
 
+        # Cámaras remotas: cada imagen pasa por su propia línea de retardo
+        # (mismo retardo que el canal robot -> Omni)
+        self.cam_lines = {'top': DelayLine(), 'side': DelayLine()}
+        self.cam_t = {'top': 0.0, 'side': 0.0}
+
         # ---------- ROS ----------
         self.create_subscription(PoseStamped, g('pose_topic'), self.on_pose, BEST_EFFORT)
         self.create_subscription(Joy, g('front_topic'), self.on_front, BEST_EFFORT)
         self.create_subscription(Joy, g('back_topic'), self.on_back, BEST_EFFORT)
         self.create_subscription(Wrench, g('ft_topic'), self.on_ft, BEST_EFFORT)
         self.create_subscription(JointState, g('joint_topic'), self.on_js, BEST_EFFORT)
+        cam_qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT,
+                             history=HistoryPolicy.KEEP_LAST, depth=2)
+        self.create_subscription(Image, g('cam_top_topic'),
+                                 lambda m: self.on_cam('top', m), cam_qos)
+        self.create_subscription(Image, g('cam_side_topic'),
+                                 lambda m: self.on_cam('side', m), cam_qos)
 
         self.pub_twist = self.create_publisher(Twist, g('twist_topic'), 10)
         self.pub_grip = self.create_publisher(Float64, g('gripper_topic'), 10)
@@ -170,6 +183,17 @@ class TeleopNode(Node):
             self.joint_names = list(m.name)
             self.joint_pos = list(m.position)
             self.joint_t = time.monotonic()
+
+    def on_cam(self, name, m):
+        # Se guarda solo lo necesario para pintar (bytes copiados del mensaje)
+        self.cam_lines[name].push((m.width, m.height, m.step, m.encoding, bytes(m.data)))
+        self.cam_t[name] = time.monotonic()
+
+    def pop_camera(self, name):
+        """Última imagen ya 'llegada' tras el retardo (o None). La llama la GUI."""
+        line = self.cam_lines[name]
+        line.delay = self.delay_force
+        return line.pop_latest_ready()
 
     def update_ee(self):
         try:
